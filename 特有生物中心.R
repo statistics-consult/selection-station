@@ -57,21 +57,22 @@ opt.train = function(X,n,iter_time) {
       #}
     }
     
-    ## elite solution
+    ## elite solution(挑出菁英)
     elite = which(rank(-score, ties.method = "random") <= floor(n/sqrt(ss)))
     cat(which(sol[, elite ] == 1), "\n")
     
-    ## Delete solution
+    ## Delete solution(刪除兩個)
     del = sample(seq(ss)[-elite], 2, prob = (1/score[-elite]) / sum(1/score[-elite]))
     
-    ## crossover
+    ## crossover(選兩個交叉)
     for (i in del) {
       chr = sample(seq(ss)[-del], 2)
       pos = sample(seq(Nc - 1), 1)
       sol[ ,i] = c(sol[1:pos, chr[1]], sol[(pos + 1):Nc, chr[2]])
     }
     
-    ## mutation
+    ## mutation(突變，菁英集不變，其他隨機突變，2個1變0，2個0變1，
+    #如果突變完比舊的還高就取代)
     for ( i in seq(ss)) {
       sol.new = sol[, i]
       n.sol = length(which(sol[, i] == 1))
@@ -152,5 +153,3 @@ result[[i]]=best
 }
 result_fish=result
 save(result_fish,file='result_fish')
-
-
