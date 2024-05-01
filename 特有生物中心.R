@@ -3,11 +3,17 @@ load("C:/Users/User/Downloads/特有生物中心/Incidence_data.RData")
 library(glmnet)
 library(compiler)
 
-## 計算覆蓋率的
+## 計算物種數的
 r.score = function(x) {
-  return(DataInfo(x, datatype = "incidence_raw")$SC)
+  return( ChaoRichness(x,datatype='incidence_raw')$Estimator)
 }
 r.score = cmpfun(r.score)
+
+#計算覆蓋度
+cv.score = function(x) {
+  return(DataInfo(x, datatype = "incidence_raw")$SC)
+}
+cv.score = cmpfun(cv.score)
 
 ## training set optimization 
 opt.train = function(X,n,iter_time) {
@@ -114,11 +120,15 @@ opt.train = cmpfun(opt.train)
 library(iNEXT)
 
 result=list()
+result_nos=list()
+result_cv=list()
+add=matrix(0,26)
 
 for (i in 1:26) {
-  
-  dat=incidence_dataset[[i]]$`1 魚類`
-  out=estimateD(
+  dat <- incidence_dataset[[i]]$`1 魚類`
+  riv <- substring(colnames(incidence_dataset[[i]][["1 魚類"]]), 1, 6)
+  num_1 <- length(unique(riv))
+  out <- estimateD(
     dat,
     q = 0,
     datatype = 'incidence_raw',
@@ -128,28 +138,150 @@ for (i in 1:26) {
     conf = 0.95
   )
   
-  n=ncol(dat)
-  best=list()
-  if(out$t>n){
-    out$t=ncol(dat);best=colnames(dat)
-  }else if(choose(n,ceiling(out$t))>10^5){
-    ga=opt.train(X=dat,n=ceiling(out$t),iter_time = 1000)
+  n <- ncol(dat)
+  best <- list()
+  nos <- list()
+  cv <- list()
+  
+  if (out$t > n) {
+    add[i] <- floor(out$t - n)
+    out$t <- ncol(dat)
+    best <- colnames(dat)
+    nos <- r.score(dat)
+    cv <- cv.score(dat)
+  } else if (choose(n, ceiling(out$t)) > 10^5) {
+    ga <- opt.train(X = dat, n = ceiling(out$t), iter_time = 1000)
+    
     for (k in 1:5) {
-      best[[k]]=colnames(dat[,ga[[k]]])
+      if (k == 1) { t <- 1 }
+      num_2 <- length(unique(substring(colnames(dat[, ga[[k]]]), 1, 6)))
+      if (num_1 == num_2) {
+        best[[t]] <- colnames(dat[, ga[[k]]])
+        nos[[t]] <- r.score(dat[, ga[[k]]])
+        cv[[t]] <- cv.score(dat[, ga[[k]]])
+        t <- t + 1
+      }
     }
-  }else{
-    all=combn(n,ceiling(out$t))
-    cov=c(0,0,0,0,0)
+  } else {
+    all <- combn(n, ceiling(out$t))
+    r_all <- c(0, 0, 0, 0, 0)
     for (j in 1:ncol(all)) {
-      if(DataInfo(dat[,all[,j]], datatype = "incidence_raw")$SC>min(cov)){
-        loc=which.min(cov)
-        cov[loc]=DataInfo(dat[,all[,j]], datatype = "incidence_raw")$SC
-        best[[loc]]=colnames(dat)[all[,j]]
+      if (r.score(dat[, all[, j]]) > min(r_all)) {
+        loc <- which.min(r_all)
+        r_all[loc] <- r.score(dat[, all[, j]])
+        names(r_all)[loc] <- j
+        r_all <- sort(r_all, decreasing = TRUE)
+      }
+    }
+    for (k in 1:5) {
+      if (k == 1) { t <- 1 }
+      num_2 <- length(unique(substring(colnames(dat)[all[, as.numeric(names(r_all)[k])]], 1, 6)))
+      if (num_1 == num_2) {
+        best[[t]] <- colnames(dat)[all[, as.numeric(names(r_all)[k])]]
+        nos[[t]] <- r.score(dat[, all[, as.numeric(names(r_all)[k])]])
+        cv[[t]] <- cv.score(dat[, all[, as.numeric(names(r_all)[k])]])
+        t <- t + 1
       }
     }
   }
-
-result[[i]]=best
+  
+  result_cv[[i]] <- cv
+  result[[i]] <- best
+  result_nos[[i]] <- nos
 }
-result_fish=result
-save(result_fish,file='result_fish')
+
+miss <- c()
+for (i in 1:26) {
+  if ((length(result[[i]]) == 0)) {
+    miss <- c(miss, i)
+  }
+}
+
+for (i in miss) {
+  dat <- incidence_dataset[[i]]$`1 魚類`
+  riv <- substring(colnames(incidence_dataset[[i]][["1 魚類"]]), 1, 6)
+  num_1 <- length(unique(riv))
+  out <- estimateD(
+    dat,
+    q = 0,
+    datatype = 'incidence_raw',
+    base = "coverage",
+    level = 0.9,
+    nboot = 0,
+    conf = 0.95
+  )
+  
+  n <- ncol(dat)
+  best <- list()
+  nos <- list()
+  cv <- list()
+  
+  if (choose(n, ceiling(out$t)) > 10^5) {
+    ga <- opt.train(X = dat, n = ceiling(out$t), iter_time = 1000)
+    
+    for (k in 1:5) {
+      if (k == 1) { t <- 1 }
+      a <- unique(riv)[which(!unique(riv) %in% unique(substring(colnames(dat[, ga[[k]]]), 1, 6)))]
+      b <- list()
+      for (l in 1:length(a)) {
+        b[[l]] <- grep(a[l], colnames(dat))
+      }
+      num_3 <- expand.grid(b)
+      r_max <- 0
+      for (m in 1:nrow(num_3)) {
+        dat2 <- cbind(dat[, ga[[k]]], dat[, as.numeric(num_3[m, ])])
+        if (r.score(dat2) > r_max) {
+          best[[t]] <- colnames(dat2)
+          cv[[t]] <- cv.score(dat2)
+          nos[[t]] <- r_max <- r.score(dat2)
+        }
+      }
+      t <- t + 1
+    }
+  } else {
+    all <- combn(n, ceiling(out$t))
+    r_all <- c(0, 0, 0, 0, 0)
+    for (j in 1:ncol(all)) {
+      if (r.score(dat[, all[, j]]) > min(r_all)) {
+        loc <- which.min(r_all)
+        r_all[loc] <- r.score(dat[, all[, j]])
+        names(r_all)[loc] <- j
+        r_all <- sort(r_all, decreasing = TRUE)
+      }
+    }
+    for (k in 1:5) {
+      if (k == 1) { t <- 1 }
+      a <- unique(riv)[which(!unique(riv) %in% unique(substring(colnames(dat)[all[, as.numeric(names(r_all)[k])]], 1, 6)))]
+      b <- list()
+      for (l in 1:length(a)) {
+        b[[l]] <- grep(a[l], colnames(dat))
+      }
+      num_3 <- expand.grid(b)
+      r_max <- 0
+      for (m in 1:nrow(num_3)) {
+        dat2 <- cbind(dat[, ga[[k]]], dat[, as.numeric(num_3[m, ])])
+        if (r.score(dat2) > r_max) {
+          best[[t]] <- colnames(dat2)
+          cv[[t]] <- cv.score(dat2)
+          nos[[t]] <- r_max <- r.score(dat2)
+        }
+      }
+      t <- t + 1
+    }
+  }
+  
+  result_cv[[i]] <- cv
+  result[[i]] <- best
+  result_nos[[i]] <- nos
+}
+
+save(result,result_cv,add,result_nos file = 'result_fish')
+
+
+
+
+
+
+
+
+
